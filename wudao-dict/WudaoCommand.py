@@ -103,6 +103,9 @@ class WudaoCommand:
         server_context = self.client.get_word_info(word).strip()
         if server_context and server_context != 'None':
             word_info = json.loads(server_context)
+            if word_info.get('fuzzy'):
+                self.painter.draw_fuzzy_suggestions(word_info)
+                return
         # 2. search in online cache first
         if not word_info:
             word_info = self.history_manager.get_word_info(word)

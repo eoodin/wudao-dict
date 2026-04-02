@@ -89,6 +89,14 @@ class CommandDraw:
                     print(self.BROWN_PATTERN % v[1])
                     count += 1
 
+    def draw_fuzzy_suggestions(self, payload):
+        q = payload.get('query', '')
+        print(self.BROWN_PATTERN % ('No exact match for "%s". Did you mean:' % q))
+        for i, s in enumerate(payload.get('suggestions') or [], 1):
+            line = ('  %d. ' % i) + (self.RED_PATTERN % s['word'])
+            line += ('  %.2f' % s['score'])
+            print(line)
+
     def draw_zh_text(self, word, conf):
         # Word
         print(self.RED_PATTERN % word['word'])

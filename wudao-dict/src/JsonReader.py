@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
-import zlib
 import json
+import zlib
+from collections import defaultdict
+from difflib import SequenceMatcher
+
 
 class JsonReader:
     def __init__(self):
@@ -11,6 +14,7 @@ class JsonReader:
         self.ZH_INDEX_FILE_NAME = './dict/zh.ind'
         self.__index_dict = {}
         self.__zh_index_dict = {}
+        self._en_buckets = defaultdict(list)
         with open(self.INDEX_FILE_NAME, 'r') as f:
             lines = f.readlines()
             prev_word, prev_no = lines[0].split('|')
@@ -19,6 +23,9 @@ class JsonReader:
                 self.__index_dict[prev_word] = (int(prev_no), int(no) - int(prev_no))
                 prev_word, prev_no = word, no
             self.__index_dict[word] = (int(no), f.tell() - int(no))
+        for w in self.__index_dict:
+            if w:
+                self._en_buckets[(len(w), w[0])].append(w)
         with open(self.ZH_INDEX_FILE_NAME, 'r') as f:
             lines = f.readlines()
             prev_word, prev_no = lines[0].split('|')
@@ -27,6 +34,56 @@ class JsonReader:
                 self.__zh_index_dict[prev_word] = (int(prev_no), int(no) - int(prev_no))
                 prev_word, prev_no = word, no
             self.__zh_index_dict[word] = (int(no), f.tell() - int(no))
+
+    def _en_fuzzy_suggestions(self, query, limit=10):
+        """Up to ``limit`` English headwords similar to ``query`` (typos / spelling)."""
+        query = (query or '').strip().lower()
+        if len(query) < 3:
+            return []
+        L = len(query)
+        fc = query[0]
+        cands = []
+        for delta in (-2, -1, 0, 1, 2):
+            ln = L + delta
+            if ln < 1:
+                continue
+            cands.extend(self._en_buckets.get((ln, fc), []))
+        min_best_ratio = 0.65 if L <= 7 else 0.58
+        ratio_floor = 0.52
+        max_pool = 4500
+        if len(cands) < 45:
+            seen = set(cands)
+            for delta in (-2, -1, 0, 1, 2):
+                ln = L + delta
+                if ln < 1:
+                    continue
+                for c in 'abcdefghijklmnopqrstuvwxyz':
+                    for w in self._en_buckets.get((ln, c), []):
+                        if w not in seen:
+                            seen.add(w)
+                            cands.append(w)
+                            if len(cands) >= max_pool:
+                                break
+                    if len(cands) >= max_pool:
+                        break
+                if len(cands) >= max_pool:
+                    break
+        scored = []
+        for w in cands:
+            r = SequenceMatcher(None, query, w).ratio()
+            if r >= ratio_floor:
+                scored.append((r, w))
+        qset = set(query)
+        scored.sort(key=lambda x: (
+            -x[0],
+            len(set(x[1]) - qset),
+            abs(len(x[1]) - L),
+            x[1],
+        ))
+        top = scored[:limit]
+        if not top or top[0][0] < min_best_ratio:
+            return []
+        return [{'word': w, 'score': round(r, 2)} for r, w in top]
 
     # return strings of word info
     def get_word_info(self, query_word):
@@ -53,6 +110,13 @@ class JsonReader:
                 word['sentence'] = json.loads(list_obj[8])
                 return json.dumps(word)
             else:
+                fuzzy = self._en_fuzzy_suggestions(query_word)
+                if fuzzy:
+                    return json.dumps({
+                        'fuzzy': True,
+                        'query': query_word,
+                        'suggestions': fuzzy,
+                    })
                 return None
 
     def get_zh_word_info(self, query_word):

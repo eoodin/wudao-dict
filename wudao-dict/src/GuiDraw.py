@@ -74,6 +74,16 @@ class GuiDraw:
                     self.html += self.P_PATTERN % (self.BROWN_PATTERN % v[1])
                     count += 1
 
+    def draw_fuzzy_suggestions(self, payload):
+        self.html = ''
+        q = payload.get('query', '')
+        self.html += self.P_W_PATTERN % ('No exact match for "%s". Did you mean:' % q)
+        for i, s in enumerate(payload.get('suggestions') or [], 1):
+            row = (self.WHITE_PATTERN % ('%d.&nbsp;' % i))
+            row += (self.RED_PATTERN % s['word'])
+            row += (self.WHITE_PATTERN % ('&nbsp; %.2f' % s['score']))
+            self.html += self.P_PATTERN % row
+
     def draw_zh_text(self, word, conf):
         # Word
         self.html += self.P_PATTERN % (self.RED_PATTERN % word['word'])

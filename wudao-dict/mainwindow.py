@@ -73,7 +73,10 @@ class MainWindow(QMainWindow):
                 wi = json.loads(server_context)
                 self.painter.html = ''
                 if wi.get('fuzzy'):
-                    self.painter.draw_fuzzy_suggestions(wi)
+                    entry = wi.get('entry')
+                    if entry and not self.is_zh:
+                        self.history_manager.add_item(entry)
+                    self.painter.draw_fuzzy_suggestions(wi, self.draw_conf)
                 elif self.is_zh:
                     self.painter.draw_zh_text(wi, self.draw_conf)
                 else:

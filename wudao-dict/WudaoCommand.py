@@ -104,7 +104,12 @@ class WudaoCommand:
         if server_context and server_context != 'None':
             word_info = json.loads(server_context)
             if word_info.get('fuzzy'):
-                self.painter.draw_fuzzy_suggestions(word_info)
+                entry = word_info.get('entry')
+                if entry and self.conf['save'] and not is_zh:
+                    self.history_manager.save_note(entry, notename)
+                self.painter.draw_fuzzy_suggestions(word_info, self.conf)
+                if entry and not is_zh:
+                    self.history_manager.add_item(entry)
                 return
         # 2. search in online cache first
         if not word_info:

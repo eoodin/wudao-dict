@@ -4,6 +4,8 @@ import zlib
 from collections import defaultdict
 from difflib import SequenceMatcher
 
+_EN_FUZZY_MIN_SIMILARITY = 0.7
+
 
 class JsonReader:
     def __init__(self):
@@ -35,6 +37,25 @@ class JsonReader:
                 prev_word, prev_no = word, no
             self.__zh_index_dict[word] = (int(no), f.tell() - int(no))
 
+    @staticmethod
+    def _en_word_from_decompressed(str_obj):
+        list_obj = str_obj.split('|')
+        word = {}
+        word['word'] = list_obj[0]
+        word['id'] = list_obj[1]
+        word['pronunciation'] = {}
+        if list_obj[2]:
+            word['pronunciation']['美'] = list_obj[2]
+        if list_obj[3]:
+            word['pronunciation']['英'] = list_obj[3]
+        if list_obj[4]:
+            word['pronunciation'][''] = list_obj[4]
+        word['paraphrase'] = json.loads(list_obj[5])
+        word['rank'] = list_obj[6]
+        word['pattern'] = list_obj[7]
+        word['sentence'] = json.loads(list_obj[8])
+        return word
+
     def _en_fuzzy_suggestions(self, query, limit=10):
         """Up to ``limit`` English headwords similar to ``query`` (typos / spelling)."""
         query = (query or '').strip().lower()
@@ -48,8 +69,6 @@ class JsonReader:
             if ln < 1:
                 continue
             cands.extend(self._en_buckets.get((ln, fc), []))
-        min_best_ratio = 0.65 if L <= 7 else 0.58
-        ratio_floor = 0.52
         max_pool = 4500
         if len(cands) < 45:
             seen = set(cands)
@@ -70,20 +89,37 @@ class JsonReader:
                     break
         scored = []
         for w in cands:
-            r = SequenceMatcher(None, query, w).ratio()
-            if r >= ratio_floor:
-                scored.append((r, w))
+            wl = w.lower()
+            r = SequenceMatcher(None, query, wl).ratio()
+            if r + 1e-12 < _EN_FUZZY_MIN_SIMILARITY:
+                continue
+            scored.append((r, w))
         qset = set(query)
         scored.sort(key=lambda x: (
             -x[0],
-            len(set(x[1]) - qset),
+            len(set(x[1].lower()) - qset),
             abs(len(x[1]) - L),
             x[1],
         ))
-        top = scored[:limit]
-        if not top or top[0][0] < min_best_ratio:
+        out = []
+        seen = set()
+        for r, w in scored:
+            if w in seen:
+                continue
+            wl = w.lower()
+            r = SequenceMatcher(None, query, wl).ratio()
+            if r + 1e-12 < _EN_FUZZY_MIN_SIMILARITY:
+                continue
+            score = round(r, 2)
+            if score + 1e-12 < _EN_FUZZY_MIN_SIMILARITY:
+                continue
+            seen.add(w)
+            out.append({'word': w, 'score': score})
+            if len(out) >= limit:
+                break
+        if not out:
             return []
-        return [{'word': w, 'score': round(r, 2)} for r, w in top]
+        return out
 
     # return strings of word info
     def get_word_info(self, query_word):
@@ -93,30 +129,30 @@ class JsonReader:
                 f.seek(word_offset[0])
                 bytes_obj = f.read(word_offset[1])
                 str_obj = zlib.decompress(bytes_obj).decode('utf8')
-                list_obj = str_obj.split('|')
-                word = {}
-                word['word'] = list_obj[0]
-                word['id'] = list_obj[1]
-                word['pronunciation'] = {}
-                if list_obj[2]:
-                    word['pronunciation']['美'] = list_obj[2]
-                if list_obj[3]:
-                    word['pronunciation']['英'] = list_obj[3]
-                if list_obj[4]:
-                    word['pronunciation'][''] = list_obj[4]
-                word['paraphrase'] = json.loads(list_obj[5])
-                word['rank'] = list_obj[6]
-                word['pattern'] = list_obj[7]
-                word['sentence'] = json.loads(list_obj[8])
+                word = self._en_word_from_decompressed(str_obj)
                 return json.dumps(word)
             else:
                 fuzzy = self._en_fuzzy_suggestions(query_word)
                 if fuzzy:
-                    return json.dumps({
+                    fuzzy = [
+                        s for s in fuzzy
+                        if s.get('score', 0) + 1e-12 >= _EN_FUZZY_MIN_SIMILARITY
+                    ]
+                    if not fuzzy:
+                        return None
+                    payload = {
                         'fuzzy': True,
                         'query': query_word,
                         'suggestions': fuzzy,
-                    })
+                    }
+                    guess = fuzzy[0]['word']
+                    if guess in self.__index_dict:
+                        off = self.__index_dict[guess]
+                        f.seek(off[0])
+                        raw = f.read(off[1])
+                        str_obj = zlib.decompress(raw).decode('utf8')
+                        payload['entry'] = self._en_word_from_decompressed(str_obj)
+                    return json.dumps(payload)
                 return None
 
     def get_zh_word_info(self, query_word):

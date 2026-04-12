@@ -89,13 +89,27 @@ class CommandDraw:
                     print(self.BROWN_PATTERN % v[1])
                     count += 1
 
-    def draw_fuzzy_suggestions(self, payload):
+    def draw_fuzzy_suggestions(self, payload, conf=None):
+        sugg = payload.get('suggestions') or []
+        entry = payload.get('entry')
         q = payload.get('query', '')
-        print(self.BROWN_PATTERN % ('No exact match for "%s". Did you mean:' % q))
-        for i, s in enumerate(payload.get('suggestions') or [], 1):
-            line = ('  %d. ' % i) + (self.RED_PATTERN % s['word'])
-            line += ('  %.2f' % s['score'])
-            print(line)
+        best = (entry or {}).get('word') or (sugg[0]['word'] if sugg else '')
+        lead = self.BROWN_PATTERN % (
+            'No exact match for "%s", explanation for the best match ' % q)
+        lead += self.RED_PATTERN % best
+        lead += self.BROWN_PATTERN % ':'
+        print(lead)
+        print('')
+        if entry is not None and conf is not None:
+            self.draw_text(entry, conf)
+        rest = sugg[1:]
+        if rest:
+            print('')
+            print(self.BROWN_PATTERN % 'Other similar words:')
+            for i, s in enumerate(rest, 1):
+                line = ('  %d. ' % i) + (self.RED_PATTERN % s['word'])
+                line += ('  %.2f' % s['score'])
+                print(line)
 
     def draw_zh_text(self, word, conf):
         # Word

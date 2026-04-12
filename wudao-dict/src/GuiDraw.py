@@ -74,15 +74,29 @@ class GuiDraw:
                     self.html += self.P_PATTERN % (self.BROWN_PATTERN % v[1])
                     count += 1
 
-    def draw_fuzzy_suggestions(self, payload):
+    def draw_fuzzy_suggestions(self, payload, conf=True):
         self.html = ''
+        sugg = payload.get('suggestions') or []
+        entry = payload.get('entry')
         q = payload.get('query', '')
-        self.html += self.P_W_PATTERN % ('No exact match for "%s". Did you mean:' % q)
-        for i, s in enumerate(payload.get('suggestions') or [], 1):
-            row = (self.WHITE_PATTERN % ('%d.&nbsp;' % i))
-            row += (self.RED_PATTERN % s['word'])
-            row += (self.WHITE_PATTERN % ('&nbsp; %.2f' % s['score']))
-            self.html += self.P_PATTERN % row
+        best = (entry or {}).get('word') or (sugg[0]['word'] if sugg else '')
+        head = (self.BROWN_PATTERN % (
+            'No exact match for "%s", explanation for the best match ' % q))
+        head += (self.RED_PATTERN % best)
+        head += (self.BROWN_PATTERN % ':')
+        self.html += self.P_PATTERN % head
+        self.html += self.P_PATTERN % ''
+        if entry is not None:
+            self.draw_text(entry, conf)
+        rest = sugg[1:]
+        if rest:
+            self.html += self.P_PATTERN % ''
+            self.html += self.P_W_PATTERN % 'Other similar words:'
+            for i, s in enumerate(rest, 1):
+                row = (self.WHITE_PATTERN % ('%d.&nbsp;' % i))
+                row += (self.RED_PATTERN % s['word'])
+                row += (self.WHITE_PATTERN % ('&nbsp; %.2f' % s['score']))
+                self.html += self.P_PATTERN % row
 
     def draw_zh_text(self, word, conf):
         # Word

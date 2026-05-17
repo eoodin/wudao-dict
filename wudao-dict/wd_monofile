@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+# ... existing imports ...
+import socket # For timeout
+from urllib.error import URLError # For network errors
+
+# ... existing code ...
+
+def get_html(x):
+    x = quote(x)
+    url = urlparse('http://dict.youdao.com/search?q=%s' % x)
+    try:
+        # Add timeout
+        res = urlopen(url.geturl(), timeout=5) 
+        xml = res.read().decode('utf-8')
+        return xml
+    except socket.timeout:
+        print("Error: Connection timed out fetching HTML.")
+        return None
+    except URLError as e:
+        print(f"Error: Network error fetching HTML: {e}")
+        return None
+    except Exception as e:
+        print(f"Error fetching HTML: {e}")
+        return None
+
+# ... existing code: get_text, get_zh_text, CommandDraw, etc. ...
+
+class WudaoCommand:
+    # ... existing code ...
+    def query(self, word, notename='notebook'):
+        # ... existing code ...
+        # 3. online search
+        if not word_info:
+            try:
+                # online search
+                print('Word not found locally, searching online...')
+                if is_zh:
+                    word_info = get_zh_text(word)
+                else:
+                    word_info = get_text(word)
+                
+                # Check if online search returned valid data
+                if not word_info or not word_info.get('paraphrase'):
+                     print('No such word: %s found online' % (self.painter.RED_PATTERN % word))
+                     # Don't save invalid info
+                     return 
+                
+                # Store valid info
+                self.history_manager.add_word_info(word_info)
+
+            except (ImportError, NameError): # Catch potential import errors if bs4/lxml missing
+                print('Error: Dependencies missing for online search (bs4, lxml).')
+                print('Please install using: ' + self.painter.RED_PATTERN % 'pip3 install bs4 lxml')
+                return
+            except (URLError, socket.timeout) as e:
+                print(f'Error: Network issue during online search ({e}). Check connection or try again.')
+                return
+            except Exception as e: # Catch other potential errors during parsing or processing
+                print(f"Error during online search/parsing: {e}")
+                # Optionally log the full traceback here for debugging
+                # import traceback
+                # traceback.print_exc()
+                return
+        # ... rest of the query method ...
+
+# ... existing code: main function ...

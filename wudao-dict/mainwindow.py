@@ -3,6 +3,8 @@ from PyQt5.QtWidgets import *
 from PyQt5.QtGui import *
 import sys
 import json
+from urllib.error import URLError
+import socket
 
 from mainwindow_ui import Ui_MainWindow
 from src.GuiDraw import GuiDraw
@@ -85,42 +87,66 @@ class MainWindow(QMainWindow):
                 self.ui.textBrowser.setHtml(self.painter.html)
             else:
                 # Online search
-                html = ''
                 if self.ui.ol_cb.isChecked():
+                    # NOTE: For true GUI stability, this network operation 
+                    # should run in a separate QThread to avoid blocking the UI.
+                    # The following is a simplified improvement focusing on error handling.
                     self.painter.html = ''
                     try:
-                        self.ui.textBrowser.setHtml(self.painter.P_W_PATTERN % 'Searching OL...')
+                        # Provide immediate feedback
+                        self.ui.textBrowser.setHtml(self.painter.P_PATTERN % 'Searching online...')
+                        QApplication.processEvents() # Update UI immediately
+
                         from src.WudaoOnline import get_text, get_zh_text
-                        from urllib.error import URLError
+                        # bs4 and lxml should ideally be checked at startup or handled more globally
+                        import bs4 
+                        import lxml
+
                         if self.is_zh:
                             word_info = get_zh_text(self.word)
                         else:
                             word_info = get_text(self.word)
-                        if not word_info['paraphrase']:
-                            html += self.painter.P_W_PATTERN % ('No such word: %s found online' % self.word)
-                        if not self.is_zh:
-                            self.history_manager.add_word_info(word_info)
-                            self.painter.draw_text(word_info, self.draw_conf)
+
+                        if not word_info or not word_info.get('paraphrase'): # Check if result is valid
+                            html = self.painter.P_W_PATTERN % ('No definition found for: %s online.' % self.word)
                         else:
-                            self.painter.draw_zh_text(word_info, self.draw_conf)
-                        self.ui.textBrowser.setHtml(self.painter.html)
-                        return
+                            # Only add history/draw if word found
+                            if not self.is_zh:
+                                self.history_manager.add_word_info(word_info) # Cache result
+                                self.painter.draw_text(word_info, self.draw_conf)
+                            else:
+                                self.painter.draw_zh_text(word_info, self.draw_conf)
+                            html = self.painter.html # Use the generated HTML
+                        
+                        self.ui.textBrowser.setHtml(html)
+                        # return # Removed return, html is set below
+
                     except ImportError:
-                        html += self.painter.P_W_PATTERN % 'You need install bs4 first.'
-                        html += self.painter.P_W_PATTERN % 'Use \'pip3 install bs4\' or get bs4 online.'
-                    except URLError:
-                        html += self.painter.P_W_PATTERN % 'No Internet : Please check your connection first'
-                else:
+                        html = self.painter.P_W_PATTERN % 'Error: Dependencies (bs4, lxml) missing for online search.'
+                        html += self.painter.P_W_PATTERN % 'Please install using: pip3 install bs4 lxml'
+                    except URLError as e:
+                        html = self.painter.P_W_PATTERN % f'Network Error: Could not connect ({e}). Please check your internet connection.'
+                    except socket.timeout:
+                         html = self.painter.P_W_PATTERN % 'Network Error: Connection timed out during online search.'
+                    except Exception as e: # Catch unexpected errors
+                        html = self.painter.P_W_PATTERN % f'An unexpected error occurred during online search: {e}'
+                    
+                    self.ui.textBrowser.setHtml(html) # Set HTML regardless of success/failure path above
+                    return # Now we can return after setting HTML
+                else: # Not searching online
                     # search in online cache first
                     word_info = self.history_manager.get_word_info(self.word)
                     if word_info:
                         self.history_manager.add_item(self.word)
-                        self.painter.draw_text(word_info, self.draw_conf)
-                        self.ui.textBrowser.setHtml(self.painter.html)
-                        return
+                        self.painter.html = ''
+                        if self.is_zh:
+                             self.painter.draw_zh_text(word_info, self.draw_conf)
+                        else:
+                             self.painter.draw_text(word_info, self.draw_conf)
+                        html = self.painter.html
                     else:
-                        html += self.painter.P_W_PATTERN % ('Error: no such word :' + self.word)
-                        html += self.painter.P_W_PATTERN % 'You can check Online Box to search it online.'
+                        html = self.painter.P_W_PATTERN % ('Error: Word not found locally: ' + self.word)
+                        html += self.painter.P_W_PATTERN % 'Tick the "Online" box to search the web.'
                 self.ui.textBrowser.setHtml(html)
 
 

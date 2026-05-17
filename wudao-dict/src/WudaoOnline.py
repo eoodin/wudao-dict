@@ -2,217 +2,187 @@
 
 import bs4
 from .soupselect import select as ss
-from urllib.request import urlopen
-from urllib.parse import urlparse
+from urllib.request import urlopen, Request
 from urllib.parse import quote
+from urllib.error import URLError, HTTPError
+import logging # Use logging for errors/warnings
 
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-def get_html(x):
-    x = quote(x)
-    url = urlparse('http://dict.youdao.com/search?q=%s' % x)
-    res = urlopen(url.geturl(), timeout=1)
-    xml = res.read().decode('utf-8')
-    return xml
+# Define a User-Agent to mimic a browser
+HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'}
+REQUEST_TIMEOUT = 10 # seconds
 
+def get_html(url):
+    """Fetches HTML content from a URL with timeout and error handling."""
+    req = Request(url, headers=HEADERS)
+    try:
+        with urlopen(req, timeout=REQUEST_TIMEOUT) as response:
+            # Check if the request was successful
+            if response.status == 200:
+                # Try decoding with utf-8 first, fallback to autodetection or other encodings if needed
+                try:
+                    return response.read().decode('utf-8')
+                except UnicodeDecodeError:
+                    logging.warning(f"Could not decode {url} with UTF-8, trying with detected encoding.")
+                    # Fallback or re-read with detected encoding if possible
+                    # For simplicity, returning None here, but more robust handling might be needed
+                    return None # Or try response.info().get_content_charset()
+            else:
+                logging.error(f"HTTP Error {response.status} for URL: {url}")
+                return None
+    except HTTPError as e:
+        logging.error(f"HTTP Error fetching {url}: {e.code} {e.reason}")
+        return None
+    except URLError as e:
+        logging.error(f"URL Error fetching {url}: {e.reason}")
+        return None
+    except Exception as e:
+        logging.error(f"Unexpected error fetching {url}: {e}")
+        return None
 
 def multi_space_to_single(text):
-    cursor = 0
-    result = ""
-    while cursor < len(text):
-        if text[cursor] in ["\t", " ", "\n", "\r"]:
-            while text[cursor] in ["\t", " ", "\n", "\r"]:
-                cursor += 1
-            result += " "
-        else:
-            result += text[cursor]
-            cursor += 1
-    return result
+    """Replaces multiple spaces with a single space."""
+    if text:
+        return ' '.join(text.split())
+    return text
 
+def _parse_with_lxml(html_content):
+    """Attempts to parse HTML using lxml, falls back to html.parser."""
+    try:
+        return bs4.BeautifulSoup(html_content, 'lxml')
+    except bs4.FeatureNotFound:
+        logging.warning("lxml not found, falling back to html.parser. Install lxml for potentially faster parsing.")
+        return bs4.BeautifulSoup(html_content, 'html.parser')
+    except Exception as e:
+        logging.error(f"Error parsing HTML: {e}")
+        return None
 
 # get word info online
 def get_text(word):
-    content = get_html(word)
-    word_struct = {"word": word}
-    root = bs4.BeautifulSoup(content, 'lxml')
+    """Fetches and parses English word information from Youdao."""
+    url = f"http://dict.youdao.com/search?q={quote(word)}"
+    html = get_html(url)
+    if not html:
+        return None
 
-    pron = {}
+    soup = _parse_with_lxml(html)
+    if not soup:
+        return None
 
-    pron_fallback = False
+    dic = {'word': word, 'pronunciation': {}, 'paraphrase': [], 'rank': '', 'pattern': '', 'sentence': []}
 
-    for pron_item in ss(root, ".pronounce"):
-        pron_lang = None
-        pron_phonetic = None
+    # Pronunciation (UK and US)
+    ph_elements = ss(soup, '.baav .phonetic') # More specific selector
+    if len(ph_elements) > 0:
+        dic['pronunciation']['美'] = ph_elements[0].text.strip()
+    if len(ph_elements) > 1:
+        dic['pronunciation']['英'] = ph_elements[1].text.strip()
 
-        for sub_item in pron_item.children:
-            if isinstance(sub_item, str) and pron_lang is None:
-                pron_lang = sub_item
-                continue
-            if isinstance(sub_item, bs4.Tag) and sub_item.name.lower() == "span" and sub_item.has_attr(
-                    "class") and "phonetic" in sub_item.get("class"):
-                pron_phonetic = sub_item
-                continue
-        if pron_phonetic is None:
-            # raise SyntaxError("WHAT THE FUCK?")
-            pron_fallback = True
-            break
-        if pron_lang is None:
-            pron_lang = ""
-        pron_lang = pron_lang.strip()
-        pron_phonetic = pron_phonetic.text
+    # Paraphrase (Basic meaning)
+    collins_section = soup.find('div', {'id': 'collinsResult'}) # Look within Collins section first
+    if collins_section:
+        paraphrase_items = ss(collins_section, '.collinsMajorTrans p .text')
+        if paraphrase_items: # Found in Collins
+             dic['paraphrase'] = [item.text.strip() for item in paraphrase_items]
+        else: # Fallback to basic definition if Collins fails
+             basic_trans = ss(soup, '#phrsListTab .trans-container ul li')
+             dic['paraphrase'] = [li.text.strip() for li in basic_trans]
+    else: # Fallback if no Collins section
+        basic_trans = ss(soup, '#phrsListTab .trans-container ul li')
+        dic['paraphrase'] = [li.text.strip() for li in basic_trans]
 
-        pron[pron_lang] = pron_phonetic
+    # Rank and Pattern (e.g., ZK / GK / CET4 / CET6 etc.)
+    rank_pattern = ss(soup, '#phrsListTab .rank')
+    if rank_pattern:
+        dic['rank'] = rank_pattern[0].text.strip()
+    pattern_tag = ss(soup, '#phrsListTab .pattern a') # Assuming pattern is linked
+    if pattern_tag:
+        dic['pattern'] = pattern_tag[0].text.strip()
+    elif not dic['rank']: # Sometimes pattern is in .pattern span directly
+        pattern_span = ss(soup, '#phrsListTab .pattern')
+        if pattern_span:
+             dic['pattern'] = pattern_span[0].text.strip()
 
-    if pron_fallback:
-        for item in ss(root, ".phonetic"):
-            if item.name.lower() == "span":
-                pron[""] = item.text
-                break
 
-    word_struct["pronunciation"] = pron
-    #
-    #  <--  BASIC DESCRIPTION
-    #
-    nodes = ss(root, "#phrsListTab .trans-container ul")
-    basic_desc = []
+    # Sentences (Example sentences)
+    sentence_pairs = ss(soup, '#bilingual .sentence-pair')
+    for pair in sentence_pairs[:5]: # Limit to first 5 sentences
+        en_s = pair.find('p', recursive=False) # Find direct child p for English
+        zh_s = pair.find_all('p')[1] if len(pair.find_all('p')) > 1 else None # Second p for Chinese
 
-    if len(nodes) != 0:
-        ul = nodes[0]
-        for li in ul.children:
-            if not (isinstance(li, bs4.Tag) and li.name.lower() == "li"):
-                continue
-            basic_desc.append(li.text.strip())
-    word_struct["paraphrase"] = basic_desc
+        if en_s and zh_s:
+            en_text = ''.join(en_s.stripped_strings)
+            zh_text = ''.join(zh_s.stripped_strings)
+            dic['sentence'].append([en_text, zh_text])
 
-    if not word_struct["paraphrase"]:
-        d = root.select(".wordGroup.def")
-        p = root.select(".wordGroup.pos")
-        ds = ""
-        dp = ""
-        if len(d) > 0:
-            ds = d[0].text.strip()
-        if len(p) > 0:
-            dp = p[0].text.strip()
-        word_struct["paraphrase"] = (dp + " " + ds).strip()
-    #
-    #  -->
-    #  <--  RANK
-    #
-    rank = ""
-    nodes = ss(root, ".rank")
-    if len(nodes) != 0:
-        rank = nodes[0].text.strip()
-    word_struct["rank"] = rank
-    #
-    #  -->
-    #  <-- PATTERN
-    #
-    # .collinsToggle .pattern
-    pattern = ""
+    # Check if essential info is missing
+    if not dic['paraphrase']:
+        logging.warning(f"No paraphrase found for '{word}' on Youdao.")
+        # Optionally return None or the partial dict based on requirements
+        # return None
 
-    nodes = ss(root, ".collinsToggle .pattern")
-    if len(nodes) != 0:
-        #    pattern = nodes[0].text.strip().replace(" ", "").replace("\t", "").replace("\n", "").replace("\r", "")
-        pattern = multi_space_to_single(nodes[0].text.strip())
-    word_struct["pattern"] = pattern
-    #
-    #  -->
-    #  <-- VERY COMPLEX
-    #
-    word_struct["sentence"] = []
-    for child in ss(root, ".collinsToggle .ol li"):
-        p = ss(child, "p")
-        if len(p) == 0:
-            continue
-        p = p[0]
-        desc = ""
-        cx = ""
-        for node in p.children:
-            if isinstance(node, str):
-                desc += node
-            elif isinstance(node, bs4.Tag) and node.name.lower() == "b" and node.children:
-                for x in node.children:
-                    if isinstance(x, str):
-                        desc += x
-            elif isinstance(node, bs4.Tag) and node.name.lower() == "span":
-                cx = node.text
-        desc = multi_space_to_single(desc.strip())
-
-        examples = []
-
-        for el in ss(child, ".exampleLists"):
-            examp = []
-            for p in ss(el, ".examples p"):
-                examp.append(p.text.strip())
-            examples.append(examp)
-        word_struct["sentence"].append([desc, cx, examples])
-    # 21 new year
-    if not word_struct["sentence"]:
-        for v in root.select("#bilingual ul li"):
-            p = ss(v, "p")
-            ll = []
-            for p in ss(v, "p"):
-                if len(p) == 0:
-                    continue
-                if 'class' not in p.attrs:
-                    ll.append(p.text.strip())
-            if len(ll) != 0:
-                word_struct["sentence"].append(ll)
-    #  -->
-    return word_struct
-
+    return dic
 
 def get_zh_text(word):
-    content = get_html(word)
-    word_struct = {"word": word}
-    root = bs4.BeautifulSoup(content, 'lxml')
+    """Fetches and parses Chinese word information from Youdao."""
+    url = f"http://dict.youdao.com/search?q={quote(word)}"
+    html = get_html(url)
+    if not html:
+        return None
 
-    # pronunciation
-    pron = ''
-    for item in ss(root, ".phonetic"):
-        if item.name.lower() == "span":
-            pron = item.text
-            break
+    soup = _parse_with_lxml(html)
+    if not soup:
+        return None
 
-    word_struct["pronunciation"] = pron
+    dic = {'word': word, 'pronunciation': '', 'paraphrase': [], 'desc': [], 'sentence': []}
 
-    #  <--  BASIC DESCRIPTION
-    nodes = ss(root, "#phrsListTab .trans-container ul p")
-    basic_desc = []
+    # Pronunciation (Pinyin)
+    pinyin = ss(soup, '#phrsListTab .phonetic')
+    if pinyin:
+        dic['pronunciation'] = pinyin[0].text.strip()
 
-    if len(nodes) != 0:
-        for li in nodes:
-            basic_desc.append(li.text.strip().replace('\n', ' '))
-    word_struct["paraphrase"] = basic_desc
+    # Paraphrase (Basic English translation)
+    paraphrase_items = ss(soup, '#phrsListTab .trans-container ul li')
+    dic['paraphrase'] = [li.text.strip() for li in paraphrase_items]
 
-    # DESC
-    desc = []
-    for child in ss(root, '#authDictTrans ul li ul li'):
-        single = []
-        sp = ss(child, 'span')
-        if sp:
-            span = sp[0].text.strip().replace(':', '')
-            if span:
-                single.append(span)
-        ps = []
-        for p in ss(child, 'p'):
-            ps.append(p.text.strip())
-        if ps:
-            single.append(ps)
-        desc.append(single)
+    # Description (Detailed explanations/definitions in Chinese)
+    desc_sections = ss(soup, '#authDictTrans .trans-wrapper')
+    for section in desc_sections:
+        title_tag = section.find('div', class_='trans-title')
+        title = title_tag.text.strip() if title_tag else ''
 
-    word_struct["desc"] = desc
+        examples = []
+        example_tags = section.select('.def_row .def_li .def, .def_row .def_li .exp') # Select definition and example lines
+        current_def = ''
+        for tag in example_tags:
+            text = tag.text.strip()
+            if 'def' in tag.get('class', []):
+                current_def = text
+            elif 'exp' in tag.get('class', []) and current_def:
+                # Assuming exp follows def, pair them
+                examples.append([current_def, text])
+                current_def = '' # Reset after pairing
+            elif not current_def: # Handle cases where exp might appear first or alone
+                 examples.append([text, '']) # Add example without definition pair
 
-    #  <-- VERY COMPLEX
-    word_struct["sentence"] = []
-    # 21 new year
-    for v in root.select("#bilingual ul li"):
-        p = ss(v, "p")
-        ll = []
-        for p in ss(v, "p"):
-            if not list(p):
-                continue
-            if 'class' not in p.attrs:
-                ll.append(p.text.strip())
-        if len(ll) != 0:
-            word_struct["sentence"].append(ll)
-    return word_struct
+        if title or examples:
+            dic['desc'].append([title, examples])
+
+    # Sentences (Example sentences)
+    sentence_pairs = ss(soup, '#examples .sentence-pair')
+    for pair in sentence_pairs[:5]: # Limit to first 5 sentences
+        # Structure might differ slightly for Chinese results, adjust selectors if needed
+        p_tags = pair.find_all('p', recursive=False)
+        if len(p_tags) >= 2:
+            zh_s = ''.join(p_tags[0].stripped_strings)
+            en_s = ''.join(p_tags[1].stripped_strings)
+            dic['sentence'].append([zh_s, en_s])
+
+    # Check if essential info is missing
+    if not dic['paraphrase'] and not dic['desc']:
+        logging.warning(f"No paraphrase or description found for '{word}' on Youdao.")
+        # return None
+
+    return dic

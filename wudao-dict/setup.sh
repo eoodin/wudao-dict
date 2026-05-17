@@ -1,5 +1,31 @@
 #!/bin/bash
 
+# Exit immediately if a command exits with a non-zero status.
+set -e
+
+# Function to check if a command exists
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+# Check prerequisites
+if ! command_exists python3; then
+    echo "Error: python3 is not installed or not in PATH." >&2
+    exit 1
+fi
+
+if ! command_exists git; then
+    echo "Error: git is not installed or not in PATH." >&2
+    exit 1
+fi
+
+# Check for sudo commands if we need them (adjust based on actual usage)
+if ! command_exists sudo; then
+    echo "Error: sudo command not found. Installation might require root privileges." >&2
+    # Decide if this is fatal or just a warning depending on whether sudo is truly needed
+    # exit 1 
+fi
+
 # 用户词
 if [ ! -d usr ]
 then

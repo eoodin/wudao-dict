@@ -1,5 +1,6 @@
 import json
 import sys
+import os
 
 RED_PATTERN = '\033[31m%s\033[0m'
 GREEN_PATTERN = '\033[32m%s\033[0m'
@@ -113,17 +114,34 @@ def draw_zh_text(word, conf):
                     print(str(count) + '. ' + BROWN_PATTERN % v[0] + '    ' + v[1])
                 count += 1
 
-print(sys.argv)
-if sys.argv[1].isalpha() and len(sys.argv) == 2:
-    f = open('../dcache/' + sys.argv[1], 'r')
-    res = json.load(f)
-    f.close()
-    
-    draw_text(res, True)
-else:
-    f = open('../../chi/dcache/' + sys.argv[1], 'r')
-    res = json.load(f)
-    f.close()
-    
-    draw_zh_text(res, True)
+# Argument check
+if len(sys.argv) != 2:
+    print("Usage: python draw_cache.py <cache_file_path>")
+    sys.exit(1)
+
+input_file = sys.argv[1]
+
+# Check if file exists before opening
+if not os.path.exists(input_file):
+    print(f"Error: Input file not found: {input_file}")
+    sys.exit(1)
+
+try:
+    with open(input_file, 'r') as f:
+        a = json.load(f)
+except json.JSONDecodeError as e:
+    print(f"Error decoding JSON from {input_file}: {e}")
+    sys.exit(1)
+except IOError as e:
+    print(f"Error reading file {input_file}: {e}")
+    sys.exit(1)
+except Exception as e:
+    print(f"An unexpected error occurred while reading {input_file}: {e}")
+    sys.exit(1)
+
+# Call draw function (assuming it handles potential errors internally or data is validated)
+try:
+    draw_text(a)
+except Exception as e:
+    print(f"Error during drawing process: {e}")
 

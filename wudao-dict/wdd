@@ -1,4 +1,10 @@
-#!/bin/bash
+#!/usr/bin/env bash
+
+# Check if python3 command exists
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "Error: python3 is not installed or not in PATH." >&2
+    exit 1
+fi
 
 count=`ps -ef | grep "python3 WudaoServer.py" | grep -v "grep" | wc -l`
  

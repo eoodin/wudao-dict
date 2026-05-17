@@ -12,21 +12,25 @@ class CommandDraw:
     @staticmethod
     def beautiy_print(text):
         try:
-            wigth = int(os.popen('stty size', 'r').read().split()[1])
-            if len(text) >= wigth and text[wigth - 1].isalpha() and text[wigth].isalpha():
-                spaces = 0
-                i = wigth - 1
-                while i > wigth/2:
-                    if not text[i].isalpha():
-                        spaces = wigth - 1 - i
-                        break
-                    i -= 1
-                print(text, text[wigth - 1:wigth+5])
-                text = text[:i] + ' '*spaces + text[i:]
-                print(text, spaces)
-            else:
-                print(text)
-        except BaseException as e:
+            # Get terminal width, default to 80 if fails
+            rows, columns = os.popen('stty size', 'r').read().split()
+            columns = int(columns)
+        except (ValueError, OSError, AttributeError) as e:
+            # print(f"Warning: Could not get terminal size ({e}), defaulting to 80 columns.")
+            columns = 80 # Default width
+
+        if len(text) >= columns and text[columns - 1].isalpha() and text[columns].isalpha():
+            spaces = 0
+            i = columns - 1
+            while i > columns/2:
+                if not text[i].isalpha():
+                    spaces = columns - 1 - i
+                    break
+                i -= 1
+            print(text, text[columns - 1:columns+5])
+            text = text[:i] + ' '*spaces + text[i:]
+            print(text, spaces)
+        else:
             print(text)
     
     def draw_text(self, word, conf):
